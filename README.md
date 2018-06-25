@@ -10,8 +10,10 @@ Checklist:
 https://www.python.org/downloads/
 2. Install pip (if not installed already by Python)
 3. Install Flask and Requests libraries.
-pip install Flask==0.12.2 requests==2.18.4 
-4. Install 
+
+ pip install Flask==0.12.2 requests==2.18.4 
+
+
 
 What IDE to use?
 Install PyCharm or any other IDE.. (Community edition is fine)
