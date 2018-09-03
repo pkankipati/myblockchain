@@ -28,7 +28,32 @@ class Blockchain(object):
         """
 
         parsed_url = urlparse(address)
-        self.nodes.add(parsed_url.netloc)
+        if parsed_url.netloc:
+            self.nodes.add(parsed_url.netloc)
+        elif parsed_url.path:
+            # Accepts an URL with path '192.168.0.0:5000'.
+            self.nodes.add(parsed_url.path)
+        else:
+            raise ValueError('Invalid URL')
+
+    def deregister_node(self, address):
+        """
+        remove the nodes from the list.
+        :param address: <str> address of the node eg: http://192.168.0.10:5005
+        :return: None
+        """
+
+        if len(self.nodes) == 0:
+            return
+
+        parsed_url = urlparse(address)
+        if parsed_url.netloc:
+            self.nodes.remove(parsed_url.netloc)
+        elif parsed_url.path:
+            # Accepts an URL with path '192.168.0.0:5000'.
+            self.nodes.remove(parsed_url.path)
+        else:
+            raise ValueError('Invalid URL')
 
     def valid_chain(self, chain):
         """
@@ -46,11 +71,12 @@ class Blockchain(object):
             print(f'{block}')
             print("\n\n--------------------\n")
             # Check that the hash of the block is correct
-            if block['previous_hash'] != self.hash(last_block) :
+            last_block_hash = self.hash(last_block)
+            if block['previous_hash'] != last_block_hash:
                 return False
 
             # Check if the proof of work is valid.
-            if not self.valid_proof(last_block['proof'], block['proof']):
+            if not self.valid_proof(last_block['proof'], block['proof'], last_block_hash):
                 return False
 
             last_block = block
@@ -74,7 +100,9 @@ class Blockchain(object):
 
         # Grab and verify the chains from all nodes on the network
         for node in neighbors:
+            print(f'requesting for node: {node}')
             response = requests.get(f'http://{node}/chain')
+            print(f'node {node} - chain: {response}')
 
             if response.status_code == 200:
                 length = response.json()['length']
@@ -92,13 +120,13 @@ class Blockchain(object):
 
         return False
 
-    def new_block(self, proof, previous_hash=None):
+    def new_block(self, proof, previous_hash):
         """
         Create a new block in the blockchain.
 
         :param proof: <int> The proof given by the proof of the work algorithm
         :param previous_hash: (Optional) <str> Hash of the previous block.
-        :return: <dict> new block
+        :return: new block
         """
 
         block = {
@@ -109,6 +137,8 @@ class Blockchain(object):
             'previous_hash': previous_hash or self.hash(self.chain[-1]),
         }
         # Reset the current list of transactions
+        self.currentTransactions = []
+
         self.chain.append(block)
         return block
 
@@ -145,30 +175,35 @@ class Blockchain(object):
         block_string = json.dumps(block, sort_keys=True).encode()
         return hashlib.sha256(block_string).hexdigest()
 
-    def proof_of_work(self, last_proof):
+    def proof_of_work(self, last_block):
         """
         Simple proof of work algorithm
         - find a number 'p' such that hash(pp') contains last 4 leading zeroes, where p is the previous p'
         - p is the previous proof, and p' is the new proof
-        :param last_proof:
-        :return:
+        :param last_block: last block
+        :return: <int>
         """
+
+        last_proof = last_block['proof']
+        last_hash = self.hash(last_block)
+
         proof = 0
-        while self.valid_proof(last_proof, proof) is False:
+        while self.valid_proof(last_proof, proof, last_hash) is False:
             proof += 1
 
         return proof
 
     @staticmethod
-    def valid_proof(last_proof, proof):
+    def valid_proof(last_proof, proof, last_hash):
         """
         Validates the Proof: Does hash(last_proof, proof) contains 4 leading zeroes?
 
         :param last_proof: <int> Previous proof
         :param proof: <int> current proof
+        :param last_hash: <str> The hash of the previous block
         :return:<bool> True if correct, false if not
         """
-        guess = f'{last_proof}{proof}'.encode()
+        guess = f'{last_proof}{proof}{last_hash}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:4] == "0000"
 
@@ -187,8 +222,7 @@ blockchain = Blockchain()
 def mine():
     # We will run the proof of work algorithm to get the next proof..
     last_block = blockchain.last_block
-    last_proof = last_block['proof']
-    proof = blockchain.proof_of_work(last_proof)
+    proof = blockchain.proof_of_work(last_block)
 
     # We must receive a reward for finding the proof.
     # The sender is "0" to signify that this node has mined a new coin.
@@ -223,6 +257,7 @@ def new_transactions():
 
     # Create a new transaction
     index = blockchain.new_transaction(values['sender'], values['recipient'], values['amount'])
+
     response = {'message': f'Transaction will be added to Block {index}'}
     return jsonify(response), 200
 
@@ -234,6 +269,15 @@ def full_chain():
         'length': len(blockchain.chain),
     }
     return jsonify(response), 200
+
+
+@app.route('/nodes', methods=['GET'])
+def all_nodes():
+    response = {
+        'message': 'All registered nodes',
+        'total_nodes': list(blockchain.nodes),
+    }
+    return jsonify(response), 201
 
 
 @app.route('/nodes/register', methods=['POST'])
@@ -249,6 +293,24 @@ def register_nodes():
 
     response = {
         'message': 'New nodes have been added',
+        'total_nodes': list(blockchain.nodes),
+    }
+    return jsonify(response), 201
+
+
+@app.route('/nodes/deRegister', methods=['POST'])
+def deregister_nodes():
+    values = request.get_json()
+
+    nodes = values.get('nodes')
+    if nodes is None:
+        return "Error, please supply a valid list of nodes", 400
+
+    for node in nodes:
+        blockchain.deregister_node(node)
+
+    response = {
+        'message': 'Nodes de-registered',
         'total_nodes': list(blockchain.nodes),
     }
     return jsonify(response), 201
